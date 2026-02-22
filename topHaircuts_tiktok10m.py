@@ -1,5 +1,5 @@
 """
-Analyze a TikTok CSV sample to infer trending haircuts.
+Analyze TikTok-10M (sample) to infer trending haircuts.
 
 Because the dataset does not contain explicit haircut, face shape, gender,
 or race labels, this script uses keyword-based heuristics on captions and
@@ -17,11 +17,13 @@ from __future__ import annotations
 import time
 
 import json
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import pandas as pd
+from datasets import load_dataset  # type: ignore
 
 
 DatasetRow = Mapping[str, Any]
@@ -187,24 +189,21 @@ class HaircutRecord:
 
 def load_tiktok10m_dataframe() -> pd.DataFrame:
     """
-    Load a 2,000-row sample from the local TikTok CSV as a pandas DataFrame.
+    Load a 2,000-row sample of the TikTok-10M dataset as a pandas DataFrame.
     """
-    df = pd.read_csv("tiktok_dataset.csv")
-    # Use only the first 2,000 rows to keep analysis lightweight.
-    return df.head(2000)
+    ds = load_dataset(
+        "The-data-company/TikTok-10M",
+        split="train[:2000]",
+    ).select_columns(
+        ["desc", "challenges", "play_count"]
+    ).shuffle(seed=time.time())
+
+    return ds.to_pandas()
 
 
 def _to_lower_text(row: DatasetRow) -> str:
-    # Support multiple schemas:
-    # - Shofo-style: "description", "hashtags"
-    # - TikTok-10M-style: "desc", "challenges"
-    # - Local CSV: "video_transcription_text"
-    desc = (
-        row.get("description")
-        or row.get("desc")
-        or row.get("video_transcription_text")
-        or ""
-    ) or ""
+    # Support both Shofo-style ("description", "hashtags") and TikTok-10M-style ("desc", "challenges").
+    desc = (row.get("description") or row.get("desc") or "") or ""
 
     hashtags = row.get("hashtags")
     if hashtags is None:
@@ -242,16 +241,10 @@ def _detect_labels(text: str, mapping: Mapping[str, Sequence[str]], allow_multip
 
 
 def _safe_play_count(row: DatasetRow) -> int:
-    # Prefer explicit play/view count columns when available.
+    # TikTok-10M stores play_count as a top-level integer column.
     if "play_count" in row:
         try:
             return int(row.get("play_count") or 0)
-        except Exception:
-            return 0
-
-    if "video_view_count" in row:
-        try:
-            return int(row.get("video_view_count") or 0)
         except Exception:
             return 0
 
@@ -359,8 +352,8 @@ def build_html_report(
     by_race: Dict[str, pd.DataFrame],
 ) -> str:
     parts: List[str] = []
-    parts.append("<html><head><title>Trending Haircuts Analysis (TikTok CSV Sample)</title></head><body>")
-    parts.append("<h1>Trending Haircuts (TikTok CSV sample)</h1>")
+    parts.append("<html><head><title>Trending Haircuts Analysis (TikTok-10M)</title></head><body>")
+    parts.append("<h1>Trending Haircuts (TikTok-10M sample)</h1>")
     parts.append("<p><em>Note: haircut, gender, race, and face shape are inferred heuristically from captions and hashtags; results are approximate.</em></p>")
 
     parts.append("<h2>Top 10 Trending Haircuts (Overall)</h2>")
@@ -386,7 +379,7 @@ def build_html_report(
 
 
 def main() -> None:
-    print("Loading local TikTok CSV dataset (2,000-row sample)...")
+    print("Loading TikTok-10M dataset (2,000-row sample)...")
     df = load_tiktok10m_dataframe()
 
     print(f"Loaded {len(df):,} videos. Inferring haircut-related records...")
