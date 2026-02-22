@@ -1,5 +1,5 @@
 """
-Analyze Shofo TikTok General (Small) to infer trending haircuts.
+Analyze a TikTok CSV sample to infer trending haircuts.
 
 Because the dataset does not contain explicit haircut, face shape, gender,
 or race labels, this script uses keyword-based heuristics on captions and
@@ -17,13 +17,11 @@ from __future__ import annotations
 import time
 
 import json
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 import pandas as pd
-from datasets import load_dataset  # type: ignore
 
 
 DatasetRow = Mapping[str, Any]
@@ -187,23 +185,30 @@ class HaircutRecord:
     play_count: int
 
 
-def load_shofo_dataframe() -> pd.DataFrame:
+def load_tiktok10m_dataframe() -> pd.DataFrame:
     """
-    Load the Shofo TikTok General (Small) dataset as a pandas DataFrame.
+    Load a 2,000-row sample from the local TikTok CSV as a pandas DataFrame.
     """
-    ds = load_dataset(
-        "Shofo/shofo-tiktok-general-small",
-        split="train[:50]",
-    ).select_columns(
-        ["description", "hashtags", "engagement_metrics"]
-    ).shuffle(seed=time.time())
-
-    return ds.to_pandas()
+    df = pd.read_csv("tiktok_dataset.csv")
+    # Use only the first 2,000 rows to keep analysis lightweight.
+    return df.head(2000)
 
 
 def _to_lower_text(row: DatasetRow) -> str:
-    desc = (row.get("description") or "") or ""
-    hashtags = row.get("hashtags") or []
+    # Support multiple schemas:
+    # - Shofo-style: "description", "hashtags"
+    # - TikTok-10M-style: "desc", "challenges"
+    # - Local CSV: "video_transcription_text"
+    desc = (
+        row.get("description")
+        or row.get("desc")
+        or row.get("video_transcription_text")
+        or ""
+    ) or ""
+
+    hashtags = row.get("hashtags")
+    if hashtags is None:
+        hashtags = row.get("challenges") or []
 
     if isinstance(hashtags, str):
         # In some environments this may already be JSON-encoded.
@@ -237,6 +242,20 @@ def _detect_labels(text: str, mapping: Mapping[str, Sequence[str]], allow_multip
 
 
 def _safe_play_count(row: DatasetRow) -> int:
+    # Prefer explicit play/view count columns when available.
+    if "play_count" in row:
+        try:
+            return int(row.get("play_count") or 0)
+        except Exception:
+            return 0
+
+    if "video_view_count" in row:
+        try:
+            return int(row.get("video_view_count") or 0)
+        except Exception:
+            return 0
+
+    # Fallback for structures where engagement metrics are nested.
     metrics = row.get("engagement_metrics")
     if isinstance(metrics, dict):
         value = metrics.get("play_count")
@@ -340,8 +359,8 @@ def build_html_report(
     by_race: Dict[str, pd.DataFrame],
 ) -> str:
     parts: List[str] = []
-    parts.append("<html><head><title>Trending Haircuts Analysis</title></head><body>")
-    parts.append("<h1>Trending Haircuts (Shofo TikTok General - Small)</h1>")
+    parts.append("<html><head><title>Trending Haircuts Analysis (TikTok CSV Sample)</title></head><body>")
+    parts.append("<h1>Trending Haircuts (TikTok CSV sample)</h1>")
     parts.append("<p><em>Note: haircut, gender, race, and face shape are inferred heuristically from captions and hashtags; results are approximate.</em></p>")
 
     parts.append("<h2>Top 10 Trending Haircuts (Overall)</h2>")
@@ -367,8 +386,8 @@ def build_html_report(
 
 
 def main() -> None:
-    print("Loading Shofo TikTok General (Small) dataset...")
-    df = load_shofo_dataframe()
+    print("Loading local TikTok CSV dataset (2,000-row sample)...")
+    df = load_tiktok10m_dataframe()
 
     print(f"Loaded {len(df):,} videos. Inferring haircut-related records...")
     records = build_haircut_records(df)
@@ -405,7 +424,7 @@ def main() -> None:
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     html = build_html_report(overall, by_gender, by_face_shape, by_race)
-    output_path = f"trending_hairstyles_data_analysis_{timestamp}_trending_hairstyles.html"
+    output_path = f"trending_hairstyles_tiktok10m_{timestamp}.html"
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(html)
 
@@ -414,3 +433,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

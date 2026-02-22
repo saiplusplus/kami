@@ -1,0 +1,6 @@
+datasets
+huggingface_hub
+pandas
+flask
+opencv-python
+numpy
